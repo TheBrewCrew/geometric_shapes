@@ -42,6 +42,8 @@
 #include <iostream>
 #include <boost/shared_ptr.hpp>
 #include <string>
+#include <Eigen/Dense>
+#include <octomap/octomap.h>
 
 namespace octomap
 {
@@ -55,7 +57,7 @@ namespace shapes
 {
 
 /** \brief A list of known shape types */
-enum ShapeType { UNKNOWN_SHAPE, SPHERE, CYLINDER, CONE, BOX, PLANE, MESH, OCTREE };
+enum ShapeType { UNKNOWN_SHAPE, SPHERE, CYLINDER, CONE, BOX, PLANE, MESH, OCTREE, OCCMAP };
 
 
 /** \brief A basic definition of a shape. Shapes are considered centered at origin */
@@ -263,6 +265,151 @@ public:
   boost::shared_ptr<const octomap::OcTree> octree;
 };
 
+class Voxel
+{
+public:
+  virtual bool   isOccupied() const = 0;
+  virtual double getOccupancy() const = 0;
+  virtual double getSize() const = 0;
+  virtual double getX() const = 0;
+  virtual double getY() const = 0;
+  virtual double getZ() const = 0;
+  Eigen::Vector3d getCoordinate() const {return Eigen::Vector3d(getX(), getY(), getZ());}
+};
+
+class occmap_iterator : public std::iterator<std::forward_iterator_tag, Voxel>
+{
+public:
+  /// Default Constructor, only used for the end-iterator
+  occmap_iterator() : vox(NULL){}
+  occmap_iterator(const occmap_iterator &other) : vox(other.vox){}
+  ~occmap_iterator() {
+    delete vox;
+  }
+
+  virtual bool operator==(const occmap_iterator& other) const = 0;
+  virtual bool operator!=(const occmap_iterator& other) const = 0;
+  virtual occmap_iterator& operator=(const occmap_iterator& other) = 0;
+  virtual occmap_iterator& operator++() = 0;
+  void operator++(int){
+    ++*this;
+  }
+  Voxel const* operator->() const {return vox;}
+  Voxel* operator->() {return vox;}
+  const Voxel& operator*() const {return *vox;}
+  Voxel& operator*() {return *vox;}
+
+protected:
+  Voxel* vox;
+};
+
+class OccMap : public Shape
+{
+public:
+  OccMap();
+
+  /** \brief The type of the shape, as a string */
+  static const std::string STRING_NAME;
+
+  virtual Shape* clone() const = 0;
+  virtual OccMap* cloneMap() const = 0;
+  virtual void print(std::ostream &out = std::cout) const = 0;
+  virtual void scaleAndPadd(double scale, double padd);
+  virtual bool isFixed() const;
+
+  virtual boost::shared_ptr<occmap_iterator> begin() = 0;
+};
+
+/** \brief Shared pointer to a OcTree */
+typedef boost::shared_ptr<const octomap::OcTree> OctTreePtr;
+
+class OctomapVoxel : public Voxel
+{
+public:
+  OctomapVoxel(octomap::OcTreeNode n, octomap::OcTreeKey k, unsigned d, const OctTreePtr &tree) : key(k), node(n), depth(d), octree(tree){}
+  OctomapVoxel(const OctomapVoxel &other) : key(other.key), node(other.node), depth(other.depth), octree(other.octree){}
+
+  virtual bool   isOccupied() const {return octree->isNodeOccupied(node);}
+  virtual double getOccupancy() const {return node.getOccupancy();}
+  virtual double getSize() const {return octree->getNodeSize(depth);}
+  virtual double getX() const {return octree->keyToCoord(key[0], depth);}
+  virtual double getY() const {return octree->keyToCoord(key[1], depth);}
+  virtual double getZ() const {return octree->keyToCoord(key[2], depth);}
+
+  octomap::OcTreeKey getKey() {return key;}
+  octomap::OcTreeNode getNode() {return node;}
+  unsigned getDepth() {return depth;}
+
+protected:
+  octomap::OcTreeKey key;
+  octomap::OcTreeNode node;
+  unsigned char depth;
+  OctTreePtr octree;
+};
+
+template<class ITYPE>
+class occmap_iterator_octomap : public occmap_iterator
+{
+public:
+  /// Constructor of the iterator, takes another iterator and wraps it
+  occmap_iterator_octomap(ITYPE i, const OctTreePtr &tree) : it(i), octree(tree){
+    vox = new OctomapVoxel(*it, it.getKey(), it.getDepth(), octree);
+  }
+  /// Copy constructor
+  occmap_iterator_octomap(const occmap_iterator_octomap &other) : occmap_iterator(other), it(other.it), octree(other.octree){}
+
+  virtual bool operator==(const occmap_iterator& other) const {
+    const occmap_iterator_octomap *o = dynamic_cast<const occmap_iterator_octomap*>(&other);
+    if (o == NULL) return false;
+    return it==o->it;
+  }
+  virtual bool operator!=(const occmap_iterator& other) const {
+    const occmap_iterator_octomap *o = dynamic_cast<const occmap_iterator_octomap*>(&other);
+    if (o == NULL) return true;
+    return it!=o->it;
+  }
+  virtual occmap_iterator& operator=(const occmap_iterator& other){
+    const occmap_iterator_octomap *o = dynamic_cast<const occmap_iterator_octomap*>(&other);
+    //if (o == NULL) return *this;
+    it = o->it;
+    octree = o->octree;
+    vox = o->vox;
+    return *this;
+  }
+  virtual occmap_iterator& operator++() {
+    ++it;
+    delete vox;
+    vox = new OctomapVoxel(*it, it.getKey(), it.getDepth(), octree);
+    return *this;
+  }
+  occmap_iterator_octomap& operator=(const occmap_iterator_octomap& other){
+    it = other.it;
+    octree = other.octree;
+    vox = other.vox;
+    return *this;
+  }
+
+protected:
+  OctTreePtr octree;
+  ITYPE it;
+};
+
+class OctomapOccMap : public OccMap
+{
+public:
+  OctomapOccMap() {}
+  OctomapOccMap(const OctTreePtr &tree) : octree(tree){}
+
+  virtual Shape* clone() const { return new OctomapOccMap(octree); };
+  virtual OccMap* cloneMap() const { return new OctomapOccMap(octree); };
+  virtual void print(std::ostream &out = std::cout) const {};
+
+  virtual boost::shared_ptr<occmap_iterator> begin() {
+    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->begin_leafs(), octree));
+  }
+
+  OctTreePtr octree;
+};
 
 /** \brief Shared pointer to a Shape */
 typedef boost::shared_ptr<Shape> ShapePtr;
