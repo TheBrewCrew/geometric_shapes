@@ -318,6 +318,9 @@ public:
   virtual bool isFixed() const;
 
   virtual boost::shared_ptr<occmap_iterator> begin() = 0;
+  virtual boost::shared_ptr<occmap_iterator> end() = 0;
+  virtual boost::shared_ptr<occmap_iterator> begin_bbx(const Eigen::Vector3d &min, const Eigen::Vector3d &max) = 0;
+  virtual boost::shared_ptr<occmap_iterator> end_bbx() = 0;
 };
 
 /** \brief Shared pointer to a OcTree */
@@ -406,6 +409,17 @@ public:
 
   virtual boost::shared_ptr<occmap_iterator> begin() {
     return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->begin_leafs(), octree));
+  }
+  virtual boost::shared_ptr<occmap_iterator> end() {
+    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->end_leafs(), octree));
+  }
+  virtual boost::shared_ptr<occmap_iterator> begin_bbx(const Eigen::Vector3d &min, const Eigen::Vector3d &max) {
+    octomap::point3d omin = octomap::point3d(min(0),min(1),min(2));
+    octomap::point3d omax = octomap::point3d(max(0),max(1),max(2));
+    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->begin_leafs_bbx(omin, omax), octree));
+  }
+  virtual boost::shared_ptr<occmap_iterator> end_bbx() {
+    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->end_leafs_bbx(), octree));
   }
 
   OctTreePtr octree;
