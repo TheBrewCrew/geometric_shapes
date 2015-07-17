@@ -265,6 +265,7 @@ public:
   boost::shared_ptr<const octomap::OcTree> octree;
 };
 
+/** \brief Abstract representation of a voxel in an occupancy map */
 class Voxel
 {
 public:
@@ -274,35 +275,26 @@ public:
   virtual double getX() const = 0;
   virtual double getY() const = 0;
   virtual double getZ() const = 0;
-  Eigen::Vector3d getCoordinate() const {return Eigen::Vector3d(getX(), getY(), getZ());}
+  virtual Voxel& operator=(const Voxel& other) = 0;
+  inline Eigen::Vector3d getCoordinate() const {return Eigen::Vector3d(getX(), getY(), getZ());}
 };
 
+/** \brief Abstract iterator over voxels in an occupancy map */
 class occmap_iterator : public std::iterator<std::forward_iterator_tag, Voxel>
 {
 public:
-  /// Default Constructor, only used for the end-iterator
-  occmap_iterator() : vox(NULL){}
-  occmap_iterator(const occmap_iterator &other) : vox(other.vox){}
-  ~occmap_iterator() {
-    delete vox;
-  }
-
   virtual bool operator==(const occmap_iterator& other) const = 0;
   virtual bool operator!=(const occmap_iterator& other) const = 0;
   virtual occmap_iterator& operator=(const occmap_iterator& other) = 0;
   virtual occmap_iterator& operator++() = 0;
-  void operator++(int){
-    ++*this;
-  }
-  Voxel const* operator->() const {return vox;}
-  Voxel* operator->() {return vox;}
-  const Voxel& operator*() const {return *vox;}
-  Voxel& operator*() {return *vox;}
-
-protected:
-  Voxel* vox;
+  virtual Voxel* operator->() = 0;
+  virtual Voxel& operator*() = 0;
+  void operator++(int) {operator++();}
 };
 
+typedef boost::shared_ptr<occmap_iterator> OccMapIterPtr;
+
+/** \brief Abstract representation of an occupancy map as a Shape */
 class OccMap : public Shape
 {
 public:
@@ -311,33 +303,50 @@ public:
   /** \brief The type of the shape, as a string */
   static const std::string STRING_NAME;
 
-  virtual Shape* clone() const = 0;
-  virtual OccMap* cloneMap() const = 0;
-  virtual void print(std::ostream &out = std::cout) const = 0;
   virtual void scaleAndPadd(double scale, double padd);
   virtual bool isFixed() const;
-
-  virtual boost::shared_ptr<occmap_iterator> begin() = 0;
-  virtual boost::shared_ptr<occmap_iterator> end() = 0;
-  virtual boost::shared_ptr<occmap_iterator> begin_bbx(const Eigen::Vector3d &min, const Eigen::Vector3d &max) = 0;
-  virtual boost::shared_ptr<occmap_iterator> end_bbx() = 0;
+  virtual OccMap* cloneMap() const = 0;
+  virtual bool operator== (const OccMap& other) const = 0;
+  /** \brief Iterator over all voxels in map */
+  virtual OccMapIterPtr begin() = 0;
+  virtual OccMapIterPtr end() = 0;
+  /** \brief Iterator over all voxels within given bounding box */
+  virtual OccMapIterPtr begin_bbx(const Eigen::Vector3d &min, const Eigen::Vector3d &max) = 0;
+  virtual OccMapIterPtr end_bbx() = 0;
 };
 
 /** \brief Shared pointer to a OcTree */
 typedef boost::shared_ptr<const octomap::OcTree> OctTreePtr;
 
+/** \brief Implementation of a voxel backed by a octomap::OcTree */
 class OctomapVoxel : public Voxel
 {
 public:
-  OctomapVoxel(octomap::OcTreeNode n, octomap::OcTreeKey k, unsigned d, const OctTreePtr &tree) : key(k), node(n), depth(d), octree(tree){}
+  OctomapVoxel(const octomap::OcTreeNode &n, const octomap::OcTreeKey &k, unsigned d, const OctTreePtr &tree) : key(k), node(n), depth(d), octree(tree){}
   OctomapVoxel(const OctomapVoxel &other) : key(other.key), node(other.node), depth(other.depth), octree(other.octree){}
 
-  virtual bool   isOccupied() const {return octree->isNodeOccupied(node);}
-  virtual double getOccupancy() const {return node.getOccupancy();}
-  virtual double getSize() const {return octree->getNodeSize(depth);}
-  virtual double getX() const {return octree->keyToCoord(key[0], depth);}
-  virtual double getY() const {return octree->keyToCoord(key[1], depth);}
-  virtual double getZ() const {return octree->keyToCoord(key[2], depth);}
+  bool   isOccupied() const {return octree->isNodeOccupied(node);}
+  double getOccupancy() const {return node.getOccupancy();}
+  double getSize() const {return octree->getNodeSize(depth);}
+  double getX() const {return octree->keyToCoord(key[0], depth);}
+  double getY() const {return octree->keyToCoord(key[1], depth);}
+  double getZ() const {return octree->keyToCoord(key[2], depth);}
+  Voxel& operator=(const Voxel& other){
+    const OctomapVoxel *o = dynamic_cast<const OctomapVoxel*>(&other);
+    if (o == NULL) return *this;
+    key = o->key;
+    node = o->node;
+    depth = o->depth;
+    octree = o->octree;
+    return *this;
+  }
+  OctomapVoxel& operator=(const OctomapVoxel& o){
+    key = o.key;
+    node = o.node;
+    depth = o.depth;
+    octree = o.octree;
+    return *this;
+  }
 
   octomap::OcTreeKey getKey() {return key;}
   octomap::OcTreeNode getNode() {return node;}
@@ -350,76 +359,89 @@ protected:
   OctTreePtr octree;
 };
 
+/** \brief Implementation iterator over voxels in a octomap::OcTree */
 template<class ITYPE>
 class occmap_iterator_octomap : public occmap_iterator
 {
 public:
   /// Constructor of the iterator, takes another iterator and wraps it
-  occmap_iterator_octomap(ITYPE i, const OctTreePtr &tree) : it(i), octree(tree){
-    vox = new OctomapVoxel(*it, it.getKey(), it.getDepth(), octree);
-  }
+  occmap_iterator_octomap(const ITYPE &i, const OctTreePtr &tree) : it(i), octree(tree), vox(*i, i.getKey(), i.getDepth(), octree){}
   /// Copy constructor
-  occmap_iterator_octomap(const occmap_iterator_octomap &other) : occmap_iterator(other), it(other.it), octree(other.octree){}
+  occmap_iterator_octomap(const occmap_iterator_octomap &other) : it(other.it), octree(other.octree), vox(other.vox){}
 
-  virtual bool operator==(const occmap_iterator& other) const {
+  bool operator==(const occmap_iterator& other) const {
     const occmap_iterator_octomap *o = dynamic_cast<const occmap_iterator_octomap*>(&other);
     if (o == NULL) return false;
     return it==o->it;
   }
-  virtual bool operator!=(const occmap_iterator& other) const {
+  bool operator!=(const occmap_iterator& other) const {
     const occmap_iterator_octomap *o = dynamic_cast<const occmap_iterator_octomap*>(&other);
     if (o == NULL) return true;
     return it!=o->it;
   }
-  virtual occmap_iterator& operator=(const occmap_iterator& other){
+  occmap_iterator& operator=(const occmap_iterator& other){
     const occmap_iterator_octomap *o = dynamic_cast<const occmap_iterator_octomap*>(&other);
-    //if (o == NULL) return *this;
+    if (o == NULL) return *this;
     it = o->it;
     octree = o->octree;
     vox = o->vox;
     return *this;
   }
-  virtual occmap_iterator& operator++() {
+  occmap_iterator& operator++() {
     ++it;
-    delete vox;
-    vox = new OctomapVoxel(*it, it.getKey(), it.getDepth(), octree);
+    vox = OctomapVoxel(*it, it.getKey(), it.getDepth(), octree);
     return *this;
   }
-  occmap_iterator_octomap& operator=(const occmap_iterator_octomap& other){
-    it = other.it;
-    octree = other.octree;
-    vox = other.vox;
-    return *this;
-  }
+  Voxel* operator->() {return &vox;}
+  Voxel& operator*() {return vox;}
 
 protected:
+  OctomapVoxel vox;
   OctTreePtr octree;
   ITYPE it;
 };
 
+/** \brief Implementation of an occupancy map backed by a octomap::OcTree */
 class OctomapOccMap : public OccMap
 {
 public:
   OctomapOccMap() {}
   OctomapOccMap(const OctTreePtr &tree) : octree(tree){}
 
-  virtual Shape* clone() const { return new OctomapOccMap(octree); };
-  virtual OccMap* cloneMap() const { return new OctomapOccMap(octree); };
-  virtual void print(std::ostream &out = std::cout) const {};
+  Shape* clone() const { return new OctomapOccMap(octree); };
+  OccMap* cloneMap() const { return new OctomapOccMap(octree); };
+  void print(std::ostream &out = std::cout) const {
+    if (octree)
+    {
+      double minx, miny, minz, maxx, maxy, maxz;
+      octree->getMetricMin(minx, miny, minz);
+      octree->getMetricMax(maxx, maxy, maxz);
+      out << "OcTree[depth = " << octree->getTreeDepth() << ", resolution = " << octree->getResolution()
+          << " inside box (minx=" << minx << ", miny=" << miny << ", minz=" << minz << ", maxx=" << maxx
+          << ", maxy=" << maxy << ", maxz=" << maxz << ")]" << std::endl;
+    }
+    else
+      out << "OcTree[NULL]" << std::endl;
+  };
 
-  virtual boost::shared_ptr<occmap_iterator> begin() {
-    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->begin_leafs(), octree));
+  OccMapIterPtr begin() {
+    return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->begin_leafs(), octree));
   }
-  virtual boost::shared_ptr<occmap_iterator> end() {
-    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->end_leafs(), octree));
+  OccMapIterPtr end() {
+    return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_iterator>(octree->end_leafs(), octree));
   }
-  virtual boost::shared_ptr<occmap_iterator> begin_bbx(const Eigen::Vector3d &min, const Eigen::Vector3d &max) {
+  OccMapIterPtr begin_bbx(const Eigen::Vector3d &min, const Eigen::Vector3d &max) {
     octomap::point3d omin = octomap::point3d(min(0),min(1),min(2));
     octomap::point3d omax = octomap::point3d(max(0),max(1),max(2));
-    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->begin_leafs_bbx(omin, omax), octree));
+    return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->begin_leafs_bbx(omin, omax), octree));
   }
-  virtual boost::shared_ptr<occmap_iterator> end_bbx() {
-    return boost::shared_ptr<occmap_iterator>(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->end_leafs_bbx(), octree));
+  OccMapIterPtr end_bbx() {
+    return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->end_leafs_bbx(), octree));
+  }
+  bool operator==(const OccMap& other) const {
+    const OctomapOccMap *o = dynamic_cast<const OctomapOccMap*>(&other);
+    if (o == NULL) return false;
+    return octree==o->octree;
   }
 
   OctTreePtr octree;
