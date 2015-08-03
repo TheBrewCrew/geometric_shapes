@@ -275,7 +275,7 @@ public:
   virtual double getX() const = 0;
   virtual double getY() const = 0;
   virtual double getZ() const = 0;
-  virtual Voxel& operator=(const Voxel& other) = 0;
+  virtual Voxel* clone() const = 0;
   inline Eigen::Vector3d getCoordinate() const {return Eigen::Vector3d(getX(), getY(), getZ());}
 };
 
@@ -305,7 +305,6 @@ public:
 
   virtual void scaleAndPadd(double scale, double padd);
   virtual bool isFixed() const;
-  virtual OccMap* cloneMap() const = 0;
   virtual bool operator== (const OccMap& other) const = 0;
   /** \brief Iterator over all voxels in map */
   virtual OccMapIterPtr begin() = 0;
@@ -331,15 +330,7 @@ public:
   double getX() const {return octree->keyToCoord(key[0], depth);}
   double getY() const {return octree->keyToCoord(key[1], depth);}
   double getZ() const {return octree->keyToCoord(key[2], depth);}
-  Voxel& operator=(const Voxel& other){
-    const OctomapVoxel *o = dynamic_cast<const OctomapVoxel*>(&other);
-    if (o == NULL) return *this;
-    key = o->key;
-    node = o->node;
-    depth = o->depth;
-    octree = o->octree;
-    return *this;
-  }
+  Voxel* clone() const { return new OctomapVoxel(*this); };
   OctomapVoxel& operator=(const OctomapVoxel& o){
     key = o.key;
     node = o.node;
@@ -348,9 +339,9 @@ public:
     return *this;
   }
 
-  octomap::OcTreeKey getKey() {return key;}
-  octomap::OcTreeNode getNode() {return node;}
-  unsigned getDepth() {return depth;}
+  octomap::OcTreeKey getKey() const {return key;}
+  octomap::OcTreeNode getNode() const {return node;}
+  unsigned getDepth() const {return depth;}
 
 protected:
   octomap::OcTreeKey key;
@@ -408,8 +399,7 @@ public:
   OctomapOccMap() {}
   OctomapOccMap(const OctTreePtr &tree) : octree(tree){}
 
-  Shape* clone() const { return new OctomapOccMap(octree); };
-  OccMap* cloneMap() const { return new OctomapOccMap(octree); };
+  Shape* clone() const { return new OctomapOccMap(*this); };
   void print(std::ostream &out = std::cout) const {
     if (octree)
     {
@@ -434,6 +424,9 @@ public:
     octomap::point3d omin = octomap::point3d(min(0),min(1),min(2));
     octomap::point3d omax = octomap::point3d(max(0),max(1),max(2));
     return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->begin_leafs_bbx(omin, omax), octree));
+  }
+  OccMapIterPtr begin_bbx(const OctomapVoxel &min, const OctomapVoxel &max) {
+    return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->begin_leafs_bbx(min.getKey(), max.getKey()), octree));
   }
   OccMapIterPtr end_bbx() {
     return OccMapIterPtr(new occmap_iterator_octomap<octomap::OcTree::leaf_bbx_iterator>(octree->end_leafs_bbx(), octree));
