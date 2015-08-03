@@ -46,6 +46,7 @@ const std::string shapes::Cone::STRING_NAME = "cone";
 const std::string shapes::Mesh::STRING_NAME = "mesh";
 const std::string shapes::Plane::STRING_NAME = "plane";
 const std::string shapes::OcTree::STRING_NAME = "octree";
+const std::string shapes::OccMap::STRING_NAME = "occmap";
 
 shapes::Shape::Shape()
 {
@@ -164,6 +165,11 @@ shapes::OcTree::OcTree(const boost::shared_ptr<const octomap::OcTree> &t) : octr
   type = OCTREE;
 }
 
+shapes::OccMap::OccMap() : Shape()
+{
+  type = OCCMAP;
+}
+
 shapes::Shape* shapes::Sphere::clone() const
 {
   return new Sphere(radius);
@@ -225,6 +231,11 @@ shapes::Shape* shapes::OcTree::clone() const
 void shapes::OcTree::scaleAndPadd(double scale, double padd)
 {
   logWarn("OcTrees cannot be scaled or padded");
+}
+
+void shapes::OccMap::scaleAndPadd(double scale, double padd)
+{
+  logWarn("OccMaps cannot be scaled or padded");
 }
 
 void shapes::Plane::scaleAndPadd(double scale, double padding)
@@ -369,6 +380,11 @@ bool shapes::Shape::isFixed() const
 }
 
 bool shapes::OcTree::isFixed() const
+{
+  return true;
+}
+
+bool shapes::OccMap::isFixed() const
 {
   return true;
 }

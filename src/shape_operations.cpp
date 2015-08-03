@@ -606,6 +606,8 @@ const std::string& shapeStringName(const Shape *shape)
       return Mesh::STRING_NAME;
     case OCTREE:
       return OcTree::STRING_NAME;
+    case OCCMAP:
+      return OccMap::STRING_NAME;
     default:
       return unknown;
     }
